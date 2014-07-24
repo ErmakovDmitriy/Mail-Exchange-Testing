@@ -1,7 +1,7 @@
 #include <Poco/Util/Application.h>
 #include <Poco/Util/PropertyFileConfiguration.h>
 #include <Poco/Util/LoggingConfigurator.h>
-#include <Poco/Net/SecureSMTPClientSession.h>
+#include <Poco/Net/SMTPClientSession.h>
 #include <Poco/Net/MailRecipient.h>
 #include <Poco/Net/MailMessage.h>
 #include <Poco/SharedPtr.h>
@@ -12,6 +12,7 @@
 #include <Poco/Net/POP3ClientSession.h>
 #include <Poco/Net/SecureStreamSocket.h>
 #include <Poco/NumberParser.h>
+#include <Poco/Net/StreamSocket.h>
 
 #include <list>
 
@@ -80,7 +81,7 @@ int MainApp::main(const std::vector<string> &args)
         SenderLogin=configFile->getString("SenderLogin");
         SenderMailAddress=configFile->getString("SenderMailAddress");
         SenderPassword=configFile->getString("SenderPassword");
-        SenderServerPort=configFile->getInt("SenderServerPort",587);
+        SenderServerPort=configFile->getInt("SenderServerPort",465);
         SenderuseTLS=configFile->getBool("SenderTLS",true);
 
 
@@ -95,7 +96,7 @@ int MainApp::main(const std::vector<string> &args)
         ErrorLogin=configFile->getString("ErrorLogin");
         ErrorMailAddress=configFile->getString("ErrorMailAddress");
         ErrorPassword=configFile->getString("ErrorPassword");
-        ErrorServerPort=configFile->getInt("ErrorServerPort",587);
+        ErrorServerPort=configFile->getInt("ErrorServerPort",465);
         ErroruseTLS=configFile->getBool("ErrorTLS",true);
 
         SendTestMessageTo=configFile->getString("SendTestMessageTo");
@@ -151,53 +152,52 @@ int MainApp::main(const std::vector<string> &args)
 
 #ifndef DEBUG_POP3
     //Отправка тестовых сообщений с порядковым числом в теме сообщения на адрес SendTestMessageTo
+    try{
+        SocketAddress smtpAddress(SenderServer,SenderServerPort);
+        SMTPClientSession *session;
 
-    if(SenderuseTLS)
-    {
-        try{
-            SecureSMTPClientSession session(SenderServer,SenderServerPort);
-            session.open();
-            session.login();
-
-            if(session.startTLS())
-            {
-                session.login(SecureSMTPClientSession::AUTH_LOGIN,SenderLogin,SenderPassword);
-
-                MailRecipient recipient(MailRecipient::PRIMARY_RECIPIENT,SendTestMessageTo);
-                for(int i=0;i<retry;i++)
-                {
-
-                    MailMessage message;
-                    message.addRecipient(recipient);
-                    message.setSender(SenderMailAddress);
-                    string subject,messageText;
-                    messageText=subject=Poco::NumberFormatter::format(nowNumber+i);
-                    message.setSubject(subject);
-                    message.add("nowNumber",messageText);
-
-                    session.sendMessage(message);
-                    listSentNumbers.push_back(nowNumber+i);
-                    sleep(1);
-                }
-                session.close();
-
-
-            }
-            else
-            {
-                logfile<<"TLS Handshake Error"<<endl;
-            }
-        }
-        catch(Poco::Exception ex)
+        if(SenderuseTLS)
         {
-            logfile<<nowNumber<<" "<<ex.message()<<endl;
+            SecureStreamSocket socket(smtpAddress,ptrContext);
+            session=new SMTPClientSession(socket);
         }
-    }
-    else
-    {
-        logfile<<"Sender doesn't use TLS - check config. It is very bad, if you don't use SSL :("<<endl;
-    }
+        else
+        {
+            StreamSocket socket(smtpAddress);
+            session=new SMTPClientSession(socket);
+        }
 
+        session->open();
+
+        session->login(SMTPClientSession::AUTH_LOGIN,SenderLogin,SenderPassword);
+
+        MailRecipient recipient(MailRecipient::PRIMARY_RECIPIENT,SendTestMessageTo);
+        for(int i=0;i<retry;i++) //Отправка такого количества сообщений, какое указано в конфиг файле.
+        {
+
+            MailMessage message;
+            message.addRecipient(recipient);
+            message.setSender(SenderMailAddress);
+            string subject,messageText;
+            messageText=subject=Poco::NumberFormatter::format(nowNumber+i);
+            message.setSubject(subject);
+            messageText="Тестовое сообщение. Необходимо для тестирования.";
+            message.setContentType("text/plain; charset=UTF-8");
+            message.setContent(messageText, MailMessage::ENCODING_8BIT);
+
+            session->sendMessage(message);
+            listSentNumbers.push_back(nowNumber+i);
+            sleep(3); //немного задержки перед отправкой второго сообщения
+        }
+        session->close();
+
+        if(session)
+            delete session;
+    }
+    catch(Poco::Exception ex)
+    {
+        logfile<<nowNumber<<"\t"<<ex.message()<<endl;
+    }
 
 #endif
     sleep(DeliverTimeout);
@@ -241,7 +241,8 @@ int MainApp::main(const std::vector<string> &args)
         {
             pop3Session->deleteMessage(((POP3ClientSession::MessageInfo)(*itMessage)).id);
         }
-        delete pop3Session;
+        if(pop3Session)
+            delete pop3Session;
 
     }
     catch(Poco::Exception ex)
@@ -276,31 +277,43 @@ int MainApp::main(const std::vector<string> &args)
     {
         //В настоящее время доступно только SSL
         try {
-            SecureSMTPClientSession errorSession(ErrorServer,ErrorServerPort);
-            errorSession.open();
-            errorSession.login();
+            SocketAddress smtpErrorAddress(ErrorServer,ErrorServerPort);
+            SMTPClientSession *errorSession;
 
-            if(errorSession.startTLS())
+            if(ErroruseTLS)
             {
-                errorSession.login(SecureSMTPClientSession::AUTH_LOGIN,ErrorLogin,ErrorPassword);
-
-                MailRecipient recipient(MailRecipient::PRIMARY_RECIPIENT,SendErrorMessageTo);
-
-                MailMessage message;
-                message.addRecipient(recipient);
-                message.setSender(ErrorMailAddress);
-                string subject,messageText;
-                subject="Возможна ошибка в работе почтовой службы";
-
-                messageText="Возможна ошибка в работе почтовой службы на шаге "+Poco::NumberFormatter::format(nowNumber)+" из "+Poco::NumberFormatter::format(retry)+
-                        " тестовых сообщений доставлено "+Poco::NumberFormatter::format(retry-errorCount);
-                message.setContentType("text/plain; charset=UTF-8");
-                message.setContent(messageText, MailMessage::ENCODING_8BIT);
-                message.setSubject(subject);
-
-                errorSession.sendMessage(message);
-                errorSession.close();
+                SecureStreamSocket socket(smtpErrorAddress,ptrContext);
+                errorSession=new SMTPClientSession(socket);
             }
+            else
+            {
+                StreamSocket socket(smtpErrorAddress);
+                errorSession=new SMTPClientSession(socket);
+            }
+
+            errorSession->open();
+
+            errorSession->login(SMTPClientSession::AUTH_LOGIN,ErrorLogin,ErrorPassword);
+
+            MailRecipient recipient(MailRecipient::PRIMARY_RECIPIENT,SendErrorMessageTo);
+
+            MailMessage message;
+            message.addRecipient(recipient);
+            message.setSender(ErrorMailAddress);
+            string subject,messageText;
+            subject="Возможна ошибка в работе почтовой службы";
+
+            messageText="Возможна ошибка в работе почтовой службы на шаге "+Poco::NumberFormatter::format(nowNumber)+" из "+Poco::NumberFormatter::format(retry)+
+                    " тестовых сообщений доставлено "+Poco::NumberFormatter::format(retry-errorCount);
+            message.setContentType("text/plain; charset=UTF-8");
+            message.setContent(messageText, MailMessage::ENCODING_8BIT);
+            message.setSubject(subject);
+
+            errorSession->sendMessage(message);
+            errorSession->close();
+
+            if(errorSession)
+                delete errorSession;
         }
         catch(Poco::Exception ex)
         {
