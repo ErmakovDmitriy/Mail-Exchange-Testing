@@ -144,9 +144,13 @@ int MainApp::main(const std::vector<string> &args)
 
 
     //initializeSSL();
+    //(Poco::Net::Context::Usage, const string&, const string&, const string&, Poco::Net::Context::VerificationMode, int, bool, const string&)
+
 
     Poco::SharedPtr<InvalidCertificateHandler>ptrHandler=new AcceptCertificateHandler(false);
-    Context::Ptr ptrContext=new Context(Context::CLIENT_USE,"",Context::VERIFY_RELAXED,9,false,"ALL:!ADH:!LOW:!EXP:!MD5@STRENGTH");
+    string emptyString="";
+    string acceptString="ALL:!ADH:!LOW:!EXP:!MD5@STRENGTH";
+    Context::Ptr ptrContext=new Context(Context::CLIENT_USE,emptyString,emptyString,emptyString,Context::VERIFY_RELAXED,9,false,acceptString);
     SSLManager::instance().initializeClient(0,ptrHandler,ptrContext);
 
 
