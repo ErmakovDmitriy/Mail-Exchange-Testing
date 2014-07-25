@@ -21,7 +21,7 @@
 #include <string>
 
 //#define DEBUG_POP3
-//#define DEBUG_SMTP
+#define DEBUG_SMTP
 
 
 using namespace std;
@@ -143,10 +143,10 @@ int MainApp::main(const std::vector<string> &args)
     }
 
 
-    initializeSSL();
+    //initializeSSL();
 
     Poco::SharedPtr<InvalidCertificateHandler>ptrHandler=new AcceptCertificateHandler(false);
-    Context::Ptr ptrContext=new Context(Context::CLIENT_USE,"");
+    Context::Ptr ptrContext=new Context(Context::CLIENT_USE,"",Context::VERIFY_RELAXED,9,false,"ALL:!ADH:!LOW:!EXP:!MD5@STRENGTH");
     SSLManager::instance().initializeClient(0,ptrHandler,ptrContext);
 
 
