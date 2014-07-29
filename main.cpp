@@ -21,9 +21,10 @@
 #include <string>
 
 //#define DEBUG_POP3
-#define DEBUG_SMTP
+//#define DEBUG_SMTP
 
-
+#define CONFIGPATH "/etc/mailtest/config.cfg"
+#define LOGPATH "/var/log/mailtest/mailtest.log"
 using namespace std;
 using namespace Poco::Util;
 using namespace Poco::Net;
@@ -37,7 +38,7 @@ public:
 int MainApp::main(const std::vector<string> &args)
 {
     ofstream logfile;
-    logfile.open("log.log",ios_base::out|ios_base::app);
+    logfile.open(LOGPATH,ios_base::out|ios_base::app);
 
     string SenderServer;
     string SenderLogin;
@@ -69,13 +70,15 @@ int MainApp::main(const std::vector<string> &args)
     int DeliverTimeout;
     int errorCount=0;
 
+    string circlepath;
+
     list<int>listSentNumbers;
     list<int>listMessageNumbers;
 
 
     try {
         PropertyFileConfiguration *configFile;
-        configFile=new PropertyFileConfiguration("config.cfg");
+        configFile=new PropertyFileConfiguration(CONFIGPATH);
 
         SenderServer=configFile->getString("SenderServer");
         SenderLogin=configFile->getString("SenderLogin");
@@ -106,6 +109,8 @@ int MainApp::main(const std::vector<string> &args)
         threshold=configFile->getInt("Threshold",retry/2+1);
         DeliverTimeout=configFile->getInt("DeliverTimeout",30);
 
+        circlepath=configFile->getString("circlePath");
+
         configFile->release();
     }
 
@@ -122,18 +127,20 @@ int MainApp::main(const std::vector<string> &args)
 
     try
     {
-        PropertyFileConfiguration *cicleConfig=new PropertyFileConfiguration("cicle.cfg");
+        PropertyFileConfiguration *cicleConfig=new PropertyFileConfiguration(circlepath);
         nowNumber=cicleConfig->getInt("number",0);
         cicleConfig->setInt("number",nowNumber+retry);
-        cicleConfig->save("cicle.cfg");
+        cicleConfig->save(circlepath);
         cicleConfig->release();
     }
     catch(Poco::FileNotFoundException ex)
     {
         logfile<<"Not Found file \"cicle.cfg\", recreating: "<<ex.code()<<"; "<<ex.name()<<"; "<<ex.message()<<"; "<<ex.displayText()<<endl;
-        ofstream out("cicle.cfg");
-        out<<"number = "<<1<<endl;
+
+        ofstream out(circlepath.c_str());
+        out<<"number: "<<1<<endl;
         out.close();
+
         return -5;
     }
     catch(Poco::NotFoundException ex)
@@ -145,13 +152,19 @@ int MainApp::main(const std::vector<string> &args)
 
     //initializeSSL();
     //(Poco::Net::Context::Usage, const string&, const string&, const string&, Poco::Net::Context::VerificationMode, int, bool, const string&)
+    Context::Ptr ptrContext;
 
-
-    Poco::SharedPtr<InvalidCertificateHandler>ptrHandler=new AcceptCertificateHandler(false);
-    string emptyString="";
-    string acceptString="ALL:!ADH:!LOW:!EXP:!MD5@STRENGTH";
-    Context::Ptr ptrContext=new Context(Context::CLIENT_USE,emptyString,emptyString,emptyString,Context::VERIFY_RELAXED,9,false,acceptString);
-    SSLManager::instance().initializeClient(0,ptrHandler,ptrContext);
+    try{
+        Poco::SharedPtr<InvalidCertificateHandler>ptrHandler=new AcceptCertificateHandler(false);
+        string emptyString="";
+        string acceptString="ALL:!ADH:!LOW:!EXP:!MD5@STRENGTH";
+        ptrContext=new Context(Context::CLIENT_USE,emptyString,emptyString,emptyString,Context::VERIFY_NONE,9,true,acceptString);
+        SSLManager::instance().initializeClient(0,ptrHandler,ptrContext);
+    }
+    catch(Poco::Exception ex)
+    {
+        logfile<<"SSL Exception\t"<<ex.message()<<endl;
+    }
 
 
 #ifndef DEBUG_POP3
@@ -203,8 +216,10 @@ int MainApp::main(const std::vector<string> &args)
         logfile<<nowNumber<<"\t"<<ex.message()<<endl;
     }
 
-#endif
+
     sleep(DeliverTimeout);
+#endif
+
 #ifndef DEBUG_SMTP
 
     //Приём сообщений с адреса ReceiveMailAddress
