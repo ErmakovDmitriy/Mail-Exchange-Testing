@@ -20,11 +20,11 @@
 #include <fstream>
 #include <string>
 
-//#define DEBUG_POP3
+#define DEBUG_POP3
 //#define DEBUG_SMTP
 
-#define CONFIGPATH "/etc/mailtest/config.cfg"
-#define LOGPATH "/var/log/mailtest/mailtest.log"
+#define CONFIGPATH "config.cfg"
+#define LOGPATH "mailtest.log"
 using namespace std;
 using namespace Poco::Util;
 using namespace Poco::Net;
@@ -109,7 +109,7 @@ int MainApp::main(const std::vector<string> &args)
         threshold=configFile->getInt("Threshold",retry/2+1);
         DeliverTimeout=configFile->getInt("DeliverTimeout",30);
 
-        circlepath=configFile->getString("circlePath");
+        circlepath=configFile->getString("circlePath","circle.log");
 
         configFile->release();
     }
@@ -228,6 +228,7 @@ int MainApp::main(const std::vector<string> &args)
         POP3ClientSession * pop3Session;
         SocketAddress pop3address(ReceiveServer,ReceiveServerPort);
 
+
         if(ReceiveuseTLS)
         {
             SecureStreamSocket pop3Socket(pop3address,ptrContext);
@@ -236,7 +237,9 @@ int MainApp::main(const std::vector<string> &args)
         }
         else
         {
-            logfile<<"Receiver doesn't use TLS - check config. Now program don't support work without SSL. It is very bad, if you don't use SSL :( My crow don't like it!"<<endl;
+            StreamSocket pop3socket(pop3address);
+
+            pop3Session=new POP3ClientSession(pop3socket);
         }
 
         //Авторизация на почтовом сервере
@@ -251,10 +254,18 @@ int MainApp::main(const std::vector<string> &args)
             int messageId=((POP3ClientSession::MessageInfo)(*itMessage)).id;
             MessageHeader tempMessageHeader;
             pop3Session->retrieveHeader(messageId,tempMessageHeader);
-            string mailSubject=tempMessageHeader.get("Subject");
-            int subjectNumber=Poco::NumberParser::parse(mailSubject);
-            listMessageNumbers.push_back(subjectNumber);
+            string mailSubject;
 
+            if(tempMessageHeader.has("Subject"))
+            {
+                mailSubject=tempMessageHeader.get("Subject");
+                int subjectNumber;
+                if(Poco::NumberParser::tryParse(mailSubject,subjectNumber))
+                {
+                    //int subjectNumber=Poco::NumberParser::parse(mailSubject);
+                    listMessageNumbers.push_back(subjectNumber);
+                }
+            }
         }
         for(vector<POP3ClientSession::MessageInfo>::iterator itMessage=listMessages.begin();itMessage!=listMessages.end();itMessage++)
         {
